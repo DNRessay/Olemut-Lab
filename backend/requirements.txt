@@ -1,0 +1,6 @@
+fastapi
+mangum
+pg8000
+pyjwt
+pypdf
+python-multipart

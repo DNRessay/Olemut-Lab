@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SciLab - Q&A, articles and AI for researchers
+
+Parameters:
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+  JwtSecret:
+    Type: String
+    NoEcho: true
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+  AllowedOrigin:
+    Type: String
+    Default: "*"
+    Description: Cloudflare Pages URL(s), comma separated
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 28
+    MemorySize: 512
+    Environment:
+      Variables:
+        DATABASE_URL: !Ref DatabaseUrl
+        JWT_SECRET: !Ref JwtSecret
+        GROQ_API_KEY: !Ref GroqApiKey
+        ALLOWED_ORIGIN: !Ref AllowedOrigin
+
+Resources:
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: app.main.handler
+      Events:
+        Proxy:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+
+Outputs:
+  ApiUrl:
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
