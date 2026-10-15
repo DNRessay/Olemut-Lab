@@ -13,10 +13,6 @@ from . import db
 bearer = HTTPBearer(auto_error=False)
 
 
-def _secret():
-    return os.environ["JWT_SECRET"]
-
-
 def hash_pw(pw: str) -> str:
     salt = secrets.token_hex(16)
     h = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 200_000).hex()
@@ -30,22 +26,21 @@ def check_pw(pw: str, stored: str) -> bool:
 
 
 def make_token(uid: int) -> str:
-    return jwt.encode({"sub": str(uid), "exp": int(time.time()) + 7 * 86400}, _secret(), "HS256")
+    return jwt.encode({"sub": str(uid), "exp": int(time.time()) + 7 * 86400}, os.environ["JWT_SECRET"], "HS256")
 
 
-def optional_user(creds: HTTPAuthorizationCredentials = Depends(bearer)):
+def current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     if not creds:
-        return None
+        raise HTTPException(401, "Login required")
     try:
-        uid = int(jwt.decode(creds.credentials, _secret(), algorithms=["HS256"])["sub"])
+        uid = int(jwt.decode(creds.credentials, os.environ["JWT_SECRET"], algorithms=["HS256"])["sub"])
     except Exception:
-        return None
-    return db.one(
-        "SELECT id, username, email, display_name, affiliation, field, bio, orcid, verified, reputation "
-        "FROM users WHERE id=:i", i=uid)
-
-
-def current_user(u=Depends(optional_user)):
+        raise HTTPException(401, "Session expired, please log in again")
+    u = db.one(
+        "SELECT id, email, full_name, phone, balance_cents, "
+        "(SELECT id FROM doctors WHERE user_id=users.id) AS doctor_id FROM users WHERE id=:i", i=uid)
     if not u:
         raise HTTPException(401, "Login required")
+    admins = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
+    u["is_admin"] = u["email"] in admins
     return u
