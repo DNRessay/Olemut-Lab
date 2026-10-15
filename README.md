@@ -1,29 +1,33 @@
-# SciLab — Stack Overflow for Scientists
+# Dokotela: direct-pay doctor booking (South Africa)
 
-FastAPI on Lambda (SAM) + Neon Postgres + Groq, static frontend on Cloudflare Pages.
+FastAPI on Lambda (SAM) + Neon Postgres + Paystack for wallet top-ups. Static frontend on Cloudflare Pages.
 
 ## Deploy
 
 ```bash
-# 1. DB schema (Neon connection string)
+# 1. DB schema
 cd backend && pip install -r requirements.txt
 DATABASE_URL="postgres://user:pass@host/db?sslmode=require" python migrate.py && cd ..
 
 # 2. API
 sam build
-sam deploy --guided   # asks for DatabaseUrl, JwtSecret (any long random string), GroqApiKey, AllowedOrigin
-# copy the ApiUrl output
+sam deploy --guided   # DatabaseUrl, JwtSecret, PaystackSecret, FrontendUrl, AllowedOrigin, AdminEmails
+# note the ApiUrl and PaystackWebhookUrl outputs
 
 # 3. Frontend: put ApiUrl in frontend/config.js, then
-npx wrangler pages deploy frontend --project-name scilab
-# re-run `sam deploy` with AllowedOrigin=https://scilab.pages.dev (your Pages URL)
+npx wrangler pages deploy frontend --project-name dokotela
 ```
 
-Local: `cd backend && DATABASE_URL=... JWT_SECRET=x GROQ_API_KEY=... uvicorn app.main:app --reload`, then serve `frontend/` with `python -m http.server` and point `config.js` at `http://localhost:8000`.
+Paystack dashboard: add the `PaystackWebhookUrl` as your webhook URL (ZAR must be enabled on the account). Until you have keys, deploy with `DevTopup=1` to get an "Add R500 test credit" button. Turn it off before going live.
 
-## Notes
+## How it works
 
-- Emails ending in `.edu` / `.ac.xx` are auto-marked **verified academic**; extend `ACADEMIC` in `main.py` for other domains or add ORCID checks.
-- Reputation: question vote ±5, answer vote ±10, article vote ±10, accepted answer +15. Badges are awarded in `main.py` (`award`).
-- AI (Groq, `GROQ_MODEL` env to change model): thread summaries, proposed answers (stored, labelled AI-generated), PDF paper summary + extracted reference list + "ask this paper". Papers are private to the uploader. The assistant is told not to invent citations, so "cross-referencing" means matching paper keywords to questions/articles on the platform.
-- PDFs go through API Gateway, so they're capped at 5 MB; scanned PDFs without a text layer are rejected.
+- **Wallet:** balance lives on `users.balance_cents` with a `wallet_tx` ledger. Booking debits the balance, creates the appointment and writes the ledger row in one DB transaction. A partial unique index on `(doctor_id, starts_at)` makes double-booking impossible.
+- **Top-up:** `/wallet/topup` creates a Paystack transaction; the webhook (HMAC-verified) and the return-page verify both credit it, exactly once.
+- **Slots:** computed live from each doctor's weekly schedule minus booked slots (SAST). The page refreshes every 30s. Status: `online`, `dropin`, `resting` (resting = no same-day bookings).
+- **Money flow:** patient pays at booking. On "Complete", the doctor is credited the fee less `COMMISSION_PCT` (default 10). Cancel more than 2h ahead = full refund; later = 50% refund, 50% to the doctor; doctor cancels = full refund. Doctor payouts to a bank account are not built, so withdraw manually from the ledger for now.
+- **Accreditation:** doctors register with an HPCSA number and stay unlisted until an admin (emails in `AdminEmails`) approves them at `#/admin`. Check each number on the HPCSA iRegister. Changing the number resets verification.
+- **Reviews:** only for completed appointments, one per visit (overall, wait time, clinic, communication).
+- **Notifications:** stored in-app and polled every 30s. Add SES or WhatsApp later if you want push.
+
+Handles health-related personal information, so look at POPIA obligations (privacy policy, consent, retention) before launch.

@@ -1,11 +1,13 @@
 import os
 import ssl
 import urllib.parse
+from contextlib import contextmanager
 
 import pg8000.exceptions
 import pg8000.native
 
 _conn = None
+_in_tx = False
 
 
 def _connect():
@@ -21,7 +23,7 @@ def _connect():
 
 
 def run(sql, **params):
-    """Run a query, return list of dict rows. Reuses one connection per warm container."""
+    """Run a query, return list of dict rows. One connection is reused per warm container."""
     global _conn
     for attempt in (0, 1):
         try:
@@ -32,10 +34,29 @@ def run(sql, **params):
             return [dict(zip(cols, r)) for r in (rows or [])]
         except (pg8000.exceptions.InterfaceError, OSError):
             _conn = None
-            if attempt:
+            if attempt or _in_tx:  # never silently retry halfway through a transaction
                 raise
 
 
 def one(sql, **params):
     rows = run(sql, **params)
     return rows[0] if rows else None
+
+
+@contextmanager
+def tx():
+    """Atomic block: all statements commit together or not at all."""
+    global _in_tx
+    run("START TRANSACTION")
+    _in_tx = True
+    try:
+        yield
+        run("COMMIT")
+    except BaseException:
+        try:
+            run("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        _in_tx = False

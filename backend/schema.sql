@@ -1,100 +1,95 @@
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
-  username TEXT UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  phone TEXT,
   password_hash TEXT NOT NULL,
-  display_name TEXT,
-  affiliation TEXT,
-  field TEXT,
+  balance_cents BIGINT NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS doctors (
+  id SERIAL PRIMARY KEY,
+  user_id INT UNIQUE NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  profession TEXT NOT NULL,
+  specialty TEXT NOT NULL,
+  hpcsa_number TEXT NOT NULL,
+  city TEXT NOT NULL,
+  address TEXT NOT NULL,
   bio TEXT,
-  orcid TEXT,
+  fee_cents INT NOT NULL CHECK (fee_cents > 0),
+  slot_minutes INT NOT NULL DEFAULT 30 CHECK (slot_minutes BETWEEN 10 AND 120),
+  status TEXT NOT NULL DEFAULT 'resting' CHECK (status IN ('online','resting','dropin')),
   verified BOOLEAN NOT NULL DEFAULT FALSE,
-  reputation INT NOT NULL DEFAULT 0,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS questions (
+CREATE TABLE IF NOT EXISTS availability (
   id SERIAL PRIMARY KEY,
-  author_id INT NOT NULL REFERENCES users(id),
-  title TEXT NOT NULL,
-  body TEXT NOT NULL,
-  tags TEXT[] NOT NULL DEFAULT '{}',
-  views INT NOT NULL DEFAULT 0,
-  score INT NOT NULL DEFAULT 0,
-  accepted_answer_id INT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  doctor_id INT NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
+  weekday SMALLINT NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL CHECK (end_time > start_time)
 );
-CREATE INDEX IF NOT EXISTS questions_tags_idx ON questions USING GIN (tags);
 
-CREATE TABLE IF NOT EXISTS answers (
+CREATE TABLE IF NOT EXISTS appointments (
   id SERIAL PRIMARY KEY,
-  question_id INT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-  author_id INT REFERENCES users(id),
-  body TEXT NOT NULL,
-  score INT NOT NULL DEFAULT 0,
-  ai_generated BOOLEAN NOT NULL DEFAULT FALSE,
+  patient_id INT NOT NULL REFERENCES users(id),
+  doctor_id INT NOT NULL REFERENCES doctors(id),
+  starts_at TIMESTAMPTZ NOT NULL,
+  ends_at TIMESTAMPTZ NOT NULL,
+  fee_cents INT NOT NULL,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'booked' CHECK (status IN ('booked','completed','cancelled')),
+  cancelled_by TEXT,
+  completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS answers_q_idx ON answers (question_id);
+CREATE UNIQUE INDEX IF NOT EXISTS appt_slot_uniq ON appointments (doctor_id, starts_at) WHERE status = 'booked';
+CREATE INDEX IF NOT EXISTS appt_patient_idx ON appointments (patient_id, starts_at DESC);
+CREATE INDEX IF NOT EXISTS appt_doctor_idx ON appointments (doctor_id, starts_at);
 
-CREATE TABLE IF NOT EXISTS articles (
+CREATE TABLE IF NOT EXISTS wallet_tx (
   id SERIAL PRIMARY KEY,
-  author_id INT NOT NULL REFERENCES users(id),
-  kind TEXT NOT NULL CHECK (kind IN ('blog','hypothesis','preprint')),
-  title TEXT NOT NULL,
-  abstract TEXT,
-  body TEXT NOT NULL,
-  tags TEXT[] NOT NULL DEFAULT '{}',
-  score INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS articles_tags_idx ON articles USING GIN (tags);
-
-CREATE TABLE IF NOT EXISTS comments (
-  id SERIAL PRIMARY KEY,
-  target_type TEXT NOT NULL CHECK (target_type IN ('question','answer','article')),
-  target_id INT NOT NULL,
-  author_id INT NOT NULL REFERENCES users(id),
-  body TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS comments_target_idx ON comments (target_type, target_id);
-
-CREATE TABLE IF NOT EXISTS votes (
   user_id INT NOT NULL REFERENCES users(id),
-  target_type TEXT NOT NULL,
-  target_id INT NOT NULL,
-  value SMALLINT NOT NULL,
-  PRIMARY KEY (user_id, target_type, target_id)
+  amount_cents BIGINT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('topup','booking','refund','earning')),
+  appointment_id INT,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS wallet_tx_user_idx ON wallet_tx (user_id, id DESC);
 
-CREATE TABLE IF NOT EXISTS badges (
+CREATE TABLE IF NOT EXISTS topups (
+  reference TEXT PRIMARY KEY,
   user_id INT NOT NULL REFERENCES users(id),
-  code TEXT NOT NULL,
-  awarded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, code)
+  amount_cents INT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS follows (
-  follower_id INT NOT NULL REFERENCES users(id),
-  followee_id INT NOT NULL REFERENCES users(id),
-  PRIMARY KEY (follower_id, followee_id)
-);
-
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE IF NOT EXISTS reviews (
   id SERIAL PRIMARY KEY,
-  sender_id INT NOT NULL REFERENCES users(id),
-  recipient_id INT NOT NULL REFERENCES users(id),
+  appointment_id INT UNIQUE NOT NULL REFERENCES appointments(id),
+  doctor_id INT NOT NULL REFERENCES doctors(id),
+  patient_id INT NOT NULL REFERENCES users(id),
+  rating SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  wait_rating SMALLINT CHECK (wait_rating BETWEEN 1 AND 5),
+  clinic_rating SMALLINT CHECK (clinic_rating BETWEEN 1 AND 5),
+  comm_rating SMALLINT CHECK (comm_rating BETWEEN 1 AND 5),
+  comment TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS reviews_doctor_idx ON reviews (doctor_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id),
   body TEXT NOT NULL,
+  link TEXT,
+  read BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS messages_rcpt_idx ON messages (recipient_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS papers (
-  id SERIAL PRIMARY KEY,
-  owner_id INT NOT NULL REFERENCES users(id),
-  filename TEXT NOT NULL,
-  text TEXT NOT NULL,
-  summary TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+CREATE INDEX IF NOT EXISTS notif_user_idx ON notifications (user_id, id DESC);
